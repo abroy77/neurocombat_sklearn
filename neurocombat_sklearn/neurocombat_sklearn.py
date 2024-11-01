@@ -1,11 +1,12 @@
 # Authors: Walter Hugo Lopez Pinaya
 # License: MIT
 import numpy as np
+from numpy.typing import ArrayLike
 import numpy.linalg as la
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.base import BaseEstimator
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.utils import check_array
-from sklearn.utils.validation import (check_is_fitted, check_consistent_length, FLOAT_DTYPES)
+from sklearn.utils.validation import (check_is_fitted, check_consistent_length, check_X_y, FLOAT_DTYPES)
 
 __all__ = [
     'CombatModel',
@@ -18,6 +19,19 @@ class CombatModel(BaseEstimator):
     [1] Fortin, Jean-Philippe, et al. "Harmonization of cortical thickness
     measurements across scanners and sites." Neuroimage 167 (2018): 104-120.
     """
+    n_sites: int
+    sites_names: np.ndarray
+    discrete_covariates_used: bool
+    continuous_covariates_used: bool
+    copy: bool
+    # site_encoder
+    # discrete_encoders
+    # beta_hat
+    # grand_mean
+    # var_pooled
+    # gamma_star
+    # delta_star
+
 
     def __init__(self, copy=True):
         self.copy = copy
@@ -42,7 +56,7 @@ class CombatModel(BaseEstimator):
             del self.gamma_star
             del self.delta_star
 
-    def fit(self, data, sites, discrete_covariates=None, continuous_covariates=None):
+    def fit(self, data: np.ndarray, sites: np.ndarray , discrete_covariates: np.ndarray = None, continuous_covariates: np.ndarray = None):
         """Compute the parameters to perform the harmonization/normalization
 
         Parameters
@@ -63,10 +77,11 @@ class CombatModel(BaseEstimator):
         # Reset internal state before fitting
         self._reset()
 
-        data = check_array(data, copy=self.copy, estimator=self, dtype=FLOAT_DTYPES)
-        sites = check_array(sites, copy=self.copy, estimator=self)
-
-        check_consistent_length(data, sites)
+        # check array requires 2D array
+        if sites.ndim == 1:
+            sites = sites.reshape((-1, 1))
+        
+        check_X_y(data, sites, dtype=FLOAT_DTYPES, copy=self.copy)
 
         if discrete_covariates is not None:
             self.discrete_covariates_used = True
