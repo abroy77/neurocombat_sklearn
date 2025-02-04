@@ -1,7 +1,6 @@
 # Authors: Walter Hugo Lopez Pinaya
 # License: MIT
 import numpy as np
-from numpy.typing import ArrayLike
 import numpy.linalg as la
 from sklearn.base import BaseEstimator
 from sklearn.preprocessing import OneHotEncoder
@@ -94,6 +93,7 @@ class CombatModel(BaseEstimator):
                                                 estimator=self, dtype=FLOAT_DTYPES)
 
         # To have a similar code to neuroCombat and Combat original scripts
+        # transforms data dims to [n_features, n_samples]
         data = data.T
 
         sites_names, n_samples_per_site = np.unique(sites, return_counts=True)
