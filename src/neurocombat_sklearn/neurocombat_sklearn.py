@@ -6,6 +6,7 @@ from sklearn.base import BaseEstimator
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.utils import check_array
 from sklearn.utils.validation import (check_is_fitted, check_consistent_length, check_X_y, FLOAT_DTYPES)
+import h5py
 
 __all__ = [
     'CombatModel',
@@ -72,22 +73,37 @@ class CombatModel(BaseEstimator):
             The covariates which are continuous
             (e.g. age and clinical scores)
         """
-
         # Reset internal state before fitting
         self._reset()
 
-        # check array requires 2D array
-        if sites.ndim == 1:
-            sites = sites.reshape((-1, 1))
-        
+        # Validate inputs
+        if sites is None:
+            raise ValueError("The 'sites' parameter cannot be None.")
+
+        if not isinstance(sites, np.ndarray):
+            raise TypeError("The 'sites' parameter must be a numpy array.")
+
+        if discrete_covariates is not None and not isinstance(discrete_covariates, np.ndarray):
+            raise TypeError("The 'discrete_covariates' parameter must be a numpy array.")
+
+        if continuous_covariates is not None and not isinstance(continuous_covariates, np.ndarray):
+            raise TypeError("The 'continuous_covariates' parameter must be a numpy array.")
+
+        # Ensure sites is a 1D array for sklearn compatibility
+        sites = sites.ravel()
+
         check_X_y(data, sites, dtype=FLOAT_DTYPES, copy=self.copy)
 
         if discrete_covariates is not None:
+            if not np.issubdtype(discrete_covariates.dtype, np.number):
+                raise TypeError("The 'discrete_covariates' parameter must contain numeric values.")
             self.discrete_covariates_used = True
             discrete_covariates = check_array(discrete_covariates, copy=self.copy,
                                               dtype=None, estimator=self)
 
         if continuous_covariates is not None:
+            if not np.issubdtype(continuous_covariates.dtype, np.number):
+                raise TypeError("The 'continuous_covariates' parameter must contain numeric values.")
             self.continuous_covariates_used = True
             continuous_covariates = check_array(continuous_covariates, copy=self.copy,
                                                 estimator=self, dtype=FLOAT_DTYPES)
@@ -95,30 +111,21 @@ class CombatModel(BaseEstimator):
         # To have a similar code to neuroCombat and Combat original scripts
         # transforms data dims to [n_features, n_samples]
         data = data.T
-
         sites_names, n_samples_per_site = np.unique(sites, return_counts=True)
-
         self.sites_names = sites_names
         self.n_sites = len(sites_names)
-
         n_samples = sites.shape[0]
         idx_per_site = [list(np.where(sites == idx)[0]) for idx in sites_names]
-
         design = self._make_design_matrix(sites, discrete_covariates, continuous_covariates, fitting=True)
-
         standardized_data, _ = self._standardize_across_features(data, design,
                                                                  n_samples, n_samples_per_site,
                                                                  fitting=True)
-
         gamma_hat, delta_hat = self._fit_ls_model(standardized_data, design, idx_per_site)
-
         gamma_bar, tau_2, a_prior, b_prior = self._find_priors(gamma_hat, delta_hat)
-
         self.gamma_star, self.delta_star = self._find_parametric_adjustments(standardized_data, idx_per_site,
                                                                              gamma_hat, delta_hat,
                                                                              gamma_bar, tau_2,
                                                                              a_prior, b_prior)
-
         return self
 
     def transform(self, data, sites, discrete_covariates=None, continuous_covariates=None):
@@ -139,7 +146,7 @@ class CombatModel(BaseEstimator):
         check_is_fitted(self, 'n_sites')
 
         data = check_array(data, copy=self.copy, estimator=self, dtype=FLOAT_DTYPES)
-        sites = check_array(sites, copy=self.copy, estimator=self)
+        # sites = check_array(sites, copy=self.copy, estimator=self)
 
         check_consistent_length(data, sites)
 
@@ -179,12 +186,69 @@ class CombatModel(BaseEstimator):
         """Fit to data, then transform it"""
         return self.fit(data, sites, *args).transform(data, sites, *args)
 
+    def save_model(self, filepath):
+        """Save the model parameters to an HDF5 file."""
+        with h5py.File(filepath, 'w') as f:
+            f.create_dataset('n_sites', data=self.n_sites)
+            f.create_dataset('sites_names', data=self.sites_names.astype('S'))
+            f.create_dataset('discrete_covariates_used', data=self.discrete_covariates_used)
+            f.create_dataset('continuous_covariates_used', data=self.continuous_covariates_used)
+            f.create_dataset('beta_hat', data=self.beta_hat)
+            f.create_dataset('grand_mean', data=self.grand_mean)
+            f.create_dataset('var_pooled', data=self.var_pooled)
+            f.create_dataset('gamma_star', data=self.gamma_star)
+            f.create_dataset('delta_star', data=self.delta_star)
+
+            # Save site_encoder attributes
+            if hasattr(self, 'site_encoder') and self.site_encoder is not None:
+                site_encoder_categories = self.site_encoder.categories_[0].astype('S')
+                f.create_dataset('site_encoder_categories', data=site_encoder_categories)
+
+            # Save discrete_encoders attributes
+            if hasattr(self, 'discrete_encoders') and self.discrete_encoders is not None:
+                for i, encoder in enumerate(self.discrete_encoders):
+                    categories = encoder.categories_[0]
+                    f.create_dataset(f'discrete_encoder_{i}_categories', data=categories)
+
+    @classmethod
+    def load_model(cls, filepath):
+        """Load the model parameters from an HDF5 file."""
+        with h5py.File(filepath, 'r') as f:
+            model = cls()
+            model.n_sites = f['n_sites'][()]
+            model.sites_names = f['sites_names'][:].astype('U')
+            model.discrete_covariates_used = f['discrete_covariates_used'][()]
+            model.continuous_covariates_used = f['continuous_covariates_used'][()]
+            model.beta_hat = f['beta_hat'][:]
+            model.grand_mean = f['grand_mean'][:]
+            model.var_pooled = f['var_pooled'][:]
+            model.gamma_star = f['gamma_star'][:]
+            model.delta_star = f['delta_star'][:]
+
+            # Load site_encoder attributes
+            if 'site_encoder_categories' in f:
+                site_encoder_categories = f['site_encoder_categories'][:].astype('U')
+                model.site_encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
+                model.site_encoder.fit(site_encoder_categories.reshape(-1, 1))
+
+            # Load discrete_encoders attributes
+            model.discrete_encoders = []
+            i = 0
+            while f.get(f'discrete_encoder_{i}_categories') is not None:
+                categories = f[f'discrete_encoder_{i}_categories'][:]
+                encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
+                encoder.fit(categories.reshape(-1, 1))
+                model.discrete_encoders.append(encoder)
+                i += 1
+
+        return model
+
     def _make_design_matrix(self, sites, discrete_covariates, continuous_covariates, fitting=False):
         """Method to create a design matrix that contain:
 
             - One-hot encoding of the sites [n_samples, n_sites]
             - One-hot encoding of each discrete covariates (removing
-            the first column) [n_samples, (n_discrete_covivariate_names-1) * n_discrete_covariates]
+            the first column) [n_samples, (n_discrete_covariate_names-1) * n_discrete_covariates]
             - Each continuous covariates
 
         Parameters
@@ -201,9 +265,12 @@ class CombatModel(BaseEstimator):
         """
         design_list = []
 
+        # Ensure sites is reshaped to 2D for OneHotEncoder compatibility
+        sites = sites.reshape(-1, 1)
+
         # Sites
         if fitting:
-            self.site_encoder = OneHotEncoder(sparse_output=False)
+            self.site_encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
             self.site_encoder.fit(sites)
 
         sites_design = self.site_encoder.transform(sites)
@@ -217,7 +284,7 @@ class CombatModel(BaseEstimator):
                 self.discrete_encoders = []
 
                 for i in range(n_discrete_covariates):
-                    discrete_encoder = OneHotEncoder(sparse_output=False)
+                    discrete_encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
                     discrete_encoder.fit(discrete_covariates[:, i][:, np.newaxis])
                     self.discrete_encoders.append(discrete_encoder)
 
