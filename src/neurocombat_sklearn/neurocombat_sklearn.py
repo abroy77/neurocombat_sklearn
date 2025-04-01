@@ -1,4 +1,4 @@
-# Authors: Walter Hugo Lopez Pinaya
+# Authors: Walter Hugo Lopez Pinaya, Abhishek Roy
 # License: MIT
 import numpy as np
 import numpy.linalg as la
