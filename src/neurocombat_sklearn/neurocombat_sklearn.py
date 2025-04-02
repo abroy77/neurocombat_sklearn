@@ -41,6 +41,8 @@ class CombatModel(BaseEstimator):
 
     def __init__(self, copy: bool = True) -> None:
         self.copy = copy
+        self.discrete_covariates_used = False
+        self.continuous_covariates_used = False
 
     def _reset(self) -> None:
         """Reset internal data-dependent state, if necessary.
@@ -52,8 +54,6 @@ class CombatModel(BaseEstimator):
         if hasattr(self, "n_sites"):
             del self.n_sites
             del self.sites_names
-            del self.discrete_covariates_used
-            del self.continuous_covariates_used
             del self.site_encoder
             del self.discrete_encoders
             del self.beta_hat
@@ -61,6 +61,9 @@ class CombatModel(BaseEstimator):
             del self.var_pooled
             del self.gamma_star
             del self.delta_star
+
+        self.discrete_covariates_used = False
+        self.continuous_covariates_used = False
 
     def fit(
         self,
@@ -109,17 +112,31 @@ class CombatModel(BaseEstimator):
                 "The 'continuous_covariates' parameter must be a numpy array."
             )
 
+        # ensure sites are 'S' strings for saving and loading
+        if not np.issubdtype(sites.dtype, np.string_):
+            try:
+                sites = sites.astype("S")
+            except Exception as e:
+                raise TypeError(
+                    e,
+                    "The 'sites' parameter must contain byte strings or be convertable to byte strings",
+                )
+
         # Ensure sites is a 1D array for sklearn compatibility
         sites = sites.ravel()
 
         check_X_y(data, sites, dtype=FLOAT_DTYPES, copy=self.copy)
 
         if discrete_covariates is not None:
-            if not np.issubdtype(discrete_covariates.dtype, np.number):
-                raise TypeError(
-                    "The 'discrete_covariates' parameter must contain numeric values."
-                )
             self.discrete_covariates_used = True
+            if not np.issubdtype(discrete_covariates.dtype, np.string_):
+                try:
+                    discrete_covariates = discrete_covariates.astype("S")
+                except Exception as e:
+                    raise TypeError(
+                        e,
+                        "The 'discrete_covariates' parameter must contain byte strings or be convertable to byte strings",
+                    )
             discrete_covariates = check_array(
                 discrete_covariates, copy=self.copy, dtype=None, estimator=self
             )
@@ -190,23 +207,82 @@ class CombatModel(BaseEstimator):
 
         check_is_fitted(self, "n_sites")
 
-        data = check_array(data, copy=self.copy, estimator=self, dtype=FLOAT_DTYPES)
-        # sites = check_array(sites, copy=self.copy, estimator=self)
+        # Validate inputs
+        if sites is None:
+            raise ValueError("The 'sites' parameter cannot be None.")
 
-        check_consistent_length(data, sites)
+        if not isinstance(sites, np.ndarray):
+            raise TypeError("The 'sites' parameter must be a numpy array.")
 
-        if hasattr(self, "discrete_covariates_used"):
+        if discrete_covariates is not None and not isinstance(
+            discrete_covariates, np.ndarray
+        ):
+            raise TypeError(
+                "The 'discrete_covariates' parameter must be a numpy array."
+            )
+
+        if continuous_covariates is not None and not isinstance(
+            continuous_covariates, np.ndarray
+        ):
+            raise TypeError(
+                "The 'continuous_covariates' parameter must be a numpy array."
+            )
+
+        # ensure sites are 'S' strings for saving and loading
+
+        if not np.issubdtype(sites.dtype, np.string_):
+            try:
+                sites = sites.astype("S")
+            except Exception as e:
+                raise TypeError(
+                    e,
+                    "The 'sites' parameter must contain byte strings or be convertable to byte strings",
+                )
+
+        # Ensure sites is a 1D array for sklearn compatibility
+        sites = sites.ravel()
+
+        check_X_y(data, sites, dtype=FLOAT_DTYPES, copy=self.copy)
+
+        discrete_covariates_used = discrete_covariates is not None
+        assert discrete_covariates_used == self.discrete_covariates_used, (
+            f"The model has discrete_covariates_used:{self.discrete_covariates_used}\n",
+            f"Transform was given discrete_covariates: {discrete_covariates_used}",
+            "These must match",
+        )
+
+        if discrete_covariates_used:
+            if not np.issubdtype(discrete_covariates.dtype, np.string_):
+                try:
+                    discrete_covariates = discrete_covariates.astype("S")
+                except Exception as e:
+                    raise TypeError(
+                        e,
+                        "The 'discrete_covariates' parameter must contain byte strings or be convertable to byte strings",
+                    )
             discrete_covariates = check_array(
                 discrete_covariates, copy=self.copy, dtype=None, estimator=self
             )
 
-        if hasattr(self, "continuous_covariates_used"):
+        continuous_covariates_used = continuous_covariates is not None
+        assert continuous_covariates_used == self.continuous_covariates_used, (
+            f"The model has continuous_covariates_used:{self.continuous_covariates_used}\n",
+            f"Transform was given continuous_covariates: {continuous_covariates_used}",
+            "These must match",
+        )
+        if continuous_covariates_used:
+            if not np.issubdtype(continuous_covariates.dtype, np.number):
+                raise TypeError(
+                    "The 'continuous_covariates' parameter must contain numeric values."
+                )
             continuous_covariates = check_array(
                 continuous_covariates,
                 copy=self.copy,
                 estimator=self,
                 dtype=FLOAT_DTYPES,
             )
+
+        check_consistent_length(data, sites)
 
         # To have a similar code to neuroCombat and Combat original scripts
         data = data.T
@@ -283,6 +359,7 @@ class CombatModel(BaseEstimator):
             ):
                 for i, encoder in enumerate(self.discrete_encoders):
                     categories = encoder.categories_[0]
+                    categories = categories.astype("S")
                     f.create_dataset(
                         f"discrete_encoder_{i}_categories", data=categories
                     )
@@ -293,7 +370,7 @@ class CombatModel(BaseEstimator):
         with h5py.File(filepath, "r") as f:
             model = cls()
             model.n_sites = f["n_sites"][()]
-            model.sites_names = f["sites_names"][:].astype("U")
+            model.sites_names = f["sites_names"][:].astype("S")
             model.discrete_covariates_used = f["discrete_covariates_used"][()]
             model.continuous_covariates_used = f["continuous_covariates_used"][()]
             model.beta_hat = f["beta_hat"][:]
@@ -304,18 +381,16 @@ class CombatModel(BaseEstimator):
 
             # Load site_encoder attributes
             if "site_encoder_categories" in f:
-                site_encoder_categories = f["site_encoder_categories"][:].astype("U")
-                model.site_encoder = OneHotEncoder(
-                    handle_unknown="ignore", sparse_output=False
-                )
+                site_encoder_categories = f["site_encoder_categories"][:].astype("S")
+                model.site_encoder = OneHotEncoder(sparse_output=False)
                 model.site_encoder.fit(site_encoder_categories.reshape(-1, 1))
 
             # Load discrete_encoders attributes
             model.discrete_encoders = []
             i = 0
             while f.get(f"discrete_encoder_{i}_categories") is not None:
-                categories = f[f"discrete_encoder_{i}_categories"][:]
-                encoder = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
+                categories = f[f"discrete_encoder_{i}_categories"][:].astype("S")
+                encoder = OneHotEncoder(sparse_output=False)
                 encoder.fit(categories.reshape(-1, 1))
                 model.discrete_encoders.append(encoder)
                 i += 1
@@ -355,9 +430,7 @@ class CombatModel(BaseEstimator):
 
         # Sites
         if fitting:
-            self.site_encoder = OneHotEncoder(
-                sparse_output=False, handle_unknown="ignore"
-            )
+            self.site_encoder = OneHotEncoder(sparse_output=False)
             self.site_encoder.fit(sites)
 
         sites_design = self.site_encoder.transform(sites)
@@ -371,9 +444,7 @@ class CombatModel(BaseEstimator):
                 self.discrete_encoders = []
 
                 for i in range(n_discrete_covariates):
-                    discrete_encoder = OneHotEncoder(
-                        sparse_output=False, handle_unknown="ignore"
-                    )
+                    discrete_encoder = OneHotEncoder(sparse_output=False)
                     discrete_encoder.fit(discrete_covariates[:, i][:, np.newaxis])
                     self.discrete_encoders.append(discrete_encoder)
 
@@ -451,10 +522,10 @@ class CombatModel(BaseEstimator):
         return standardized_data, standardized_mean
 
     def _fit_ls_model(
-        self, 
-        standardized_data: np.ndarray, 
-        design: np.ndarray, 
-        idx_per_site: List[List[int]]
+        self,
+        standardized_data: np.ndarray,
+        design: np.ndarray,
+        idx_per_site: List[List[int]],
     ) -> Tuple[np.ndarray, List[np.ndarray]]:
         """Location and scale (L/S) adjustments
 

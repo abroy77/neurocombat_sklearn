@@ -1,4 +1,3 @@
-import os
 import tempfile
 import numpy as np
 import pytest  # Keep pytest for running tests
@@ -15,20 +14,15 @@ def test_combat_model_fit_and_transform():
     data = np.random.rand(n_samples, n_features)
     sites = np.random.choice(["Site1", "Site2", "Site3"], size=n_samples).reshape(-1, 1)
     age = np.random.randint(20, 60, size=n_samples).reshape(-1, 1)
-    smoker = np.random.choice(["True", "False"], size=n_samples)
-
-    # Convert categorical variables to numerical
-    smoker_numeric = np.where(smoker == "True", 1, 0).reshape(-1, 1)
+    smoker = np.random.choice(["True", "False"], size=n_samples).reshape(-1, 1)
 
     # Initialize and fit CombatModel
     combat = CombatModel()
-    combat.fit(
-        data, sites, discrete_covariates=smoker_numeric, continuous_covariates=age
-    )
+    combat.fit(data, sites, discrete_covariates=smoker, continuous_covariates=age)
 
     # Transform the data
     transformed_data = combat.transform(
-        data, sites, discrete_covariates=smoker_numeric, continuous_covariates=age
+        data, sites, discrete_covariates=smoker, continuous_covariates=age
     )
 
     # Check that transformed data has the same shape as input data
@@ -50,20 +44,15 @@ def test_combat_model_save_and_load():
     data = np.random.rand(n_samples, n_features)
     sites = np.random.choice(["Site1", "Site2", "Site3"], size=n_samples).reshape(-1, 1)
     age = np.random.randint(20, 60, size=n_samples).reshape(-1, 1)
-    smoker = np.random.choice(["True", "False"], size=n_samples)
-
-    # Convert categorical variables to numerical
-    smoker_numeric = np.where(smoker == "True", 1, 0).reshape(-1, 1)
+    smoker = np.random.choice(["True", "False"], size=n_samples).reshape(-1, 1)
 
     # Initialize and fit CombatModel
     combat = CombatModel()
-    combat.fit(
-        data, sites, discrete_covariates=smoker_numeric, continuous_covariates=age
-    )
+    combat.fit(data, sites, discrete_covariates=smoker, continuous_covariates=age)
 
     # Transform the data
     transformed_data = combat.transform(
-        data, sites, discrete_covariates=smoker_numeric, continuous_covariates=age
+        data, sites, discrete_covariates=smoker, continuous_covariates=age
     )
 
     # Use tempfile to manage the temporary file
@@ -80,7 +69,7 @@ def test_combat_model_save_and_load():
             loaded_transformed_data = loaded_combat.transform(
                 data,
                 sites,
-                discrete_covariates=smoker_numeric,
+                discrete_covariates=smoker,
                 continuous_covariates=age,
             )
 
@@ -146,4 +135,54 @@ def test_unsupported_covariate_types():
 
     # Test with unsupported covariate type
     with pytest.raises(TypeError):
-        combat.fit(data, sites, discrete_covariates=invalid_covariate)
+        combat.fit(data, sites, continuous_covariates=invalid_covariate)
+
+
+def test_unseen_discreet_covariate_in_transform():
+    np.random.seed(42)  # Set seed for reproducibility
+
+    # Generate random data
+    n_samples = 100
+    n_features = 10
+
+    data = np.random.rand(n_samples, n_features)
+    sites = np.random.choice(["Site1", "Site2", "Site3"], size=n_samples).reshape(-1, 1)
+    age = np.random.randint(20, 60, size=n_samples).reshape(-1, 1)
+    smoker = np.random.choice(["True", "False"], size=n_samples).reshape(-1, 1)
+    # Initialize and fit CombatModel
+    combat = CombatModel()
+    combat.fit(data, sites, discrete_covariates=smoker, continuous_covariates=age)
+    # ADDING UNSEEN COVARIATE
+    smoker = np.random.choice(["True", "False", "UNSEEN"], size=n_samples).reshape(
+        -1, 1
+    )
+    # Transform the data
+    with pytest.raises(ValueError):
+        combat.transform(
+            data, sites, discrete_covariates=smoker, continuous_covariates=age
+        )
+
+
+def test_unseen_site_in_transform():
+    np.random.seed(42)  # Set seed for reproducibility
+
+    # Generate random data
+    n_samples = 100
+    n_features = 10
+
+    data = np.random.rand(n_samples, n_features)
+    sites = np.random.choice(["Site1", "Site2", "Site3"], size=n_samples).reshape(-1, 1)
+    age = np.random.randint(20, 60, size=n_samples).reshape(-1, 1)
+    smoker = np.random.choice(["True", "False"], size=n_samples).reshape(-1, 1)
+    # Initialize and fit CombatModel
+    combat = CombatModel()
+    combat.fit(data, sites, discrete_covariates=smoker, continuous_covariates=age)
+    # ADDING UNSEEN SITE
+    sites = np.random.choice(
+        ["Site1", "Site2", "Site3", "UNSEEN SITE"], size=n_samples
+    ).reshape(-1, 1)
+    # Transform the data
+    with pytest.raises(ValueError):
+        combat.transform(
+            data, sites, discrete_covariates=smoker, continuous_covariates=age
+        )
